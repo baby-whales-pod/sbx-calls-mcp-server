@@ -1,0 +1,119 @@
+# compose.dev.yml — manual testing environment.
+#
+# Starts three services:
+#   mcp-scripts   : the MCP server built from source (port 8080)
+#   mcp-gateway   : Docker MCP gateway that secures and proxies the server (port 9011)
+#   mcp-inspector : MCP Inspector web UI for manual tool testing (port 6274)
+#
+# Usage:
+#   docker compose -f compose.dev.yml up --build -d   # first time (builds the image)
+#   docker compose -f compose.dev.yml up -d           # subsequent starts
+#   docker compose -f compose.dev.yml logs -f         # follow logs
+#   docker compose -f compose.dev.yml down            # stop everything
+#
+# Connect with MCP Inspector:
+#   Open http://localhost:6274 in your browser.
+#   The gateway is pre-configured as "mcp-scripts" in the inspector.
+#
+# Connect directly (without gateway):
+#   Transport : Streamable HTTP
+#   URL       : http://localhost:8080/mcp
+
+services:
+
+  # ---------------------------------------------------------------------------
+  # mcp-scripts — the MCP server built from Dockerfile.dev
+  # ---------------------------------------------------------------------------
+  mcp-scripts:
+    build:
+      context: .
+      dockerfile: Dockerfile.dev
+    ports:
+      - 8080:8080
+    # TCP check via bash /dev/tcp — does not trigger the SSE stream that a GET
+    # on /mcp would open (which hangs curl until timeout and fails the check).
+    # Returns exit 0 as soon as the TCP handshake succeeds.
+    healthcheck:
+      test: ["CMD-SHELL", "bash -c '</dev/tcp/localhost/8080'"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+      start_period: 5s
+
+  # ---------------------------------------------------------------------------
+  # mcp-gateway — secures and proxies mcp-scripts
+  # Exposed on host port 9011.
+  # ---------------------------------------------------------------------------
+  mcp-gateway:
+    image: docker/mcp-gateway:v2
+    ports:
+      - 9011:9011
+    use_api_socket: true
+    command:
+      - --port=9011
+      - --transport=streaming
+      - --verbose
+      - --catalog=/mcp/catalog.yaml
+      - --servers=mcp-scripts
+      # Expose all tools from mcp-scripts. To restrict, list them explicitly:
+      # - --tools=mcp-scripts:get-date,list-files,system-info,greet,word-count,echo,add
+      - --tools=mcp-scripts:*
+    configs:
+      - source: catalog.yaml
+        target: /mcp/catalog.yaml
+    depends_on:
+      mcp-scripts:
+        condition: service_healthy
+
+  # ---------------------------------------------------------------------------
+  # mcp-inspector — web UI for browsing and calling MCP tools manually.
+  # Open http://localhost:6274 in your browser.
+  # The gateway URL is pre-seeded in the inspector config.
+  # ---------------------------------------------------------------------------
+  mcp-inspector:
+    image: ghcr.io/modelcontextprotocol/inspector:latest
+    command: ["--config", "/app/mcp.json"]
+    ports:
+      - 6274:6274
+      - 6277:6277
+    environment:
+      HOST: 0.0.0.0
+      ALLOWED_ORIGINS: "http://0.0.0.0:6274,http://localhost:6274"
+      MCP_AUTO_OPEN_ENABLED: false
+    configs:
+      - source: inspector.json
+        target: /app/mcp.json
+    depends_on:
+      - mcp-gateway
+
+# ---------------------------------------------------------------------------
+# Inline configs — avoids extra files on disk.
+# ---------------------------------------------------------------------------
+configs:
+
+  # mcp-gateway catalog: tells the gateway where mcp-scripts listens.
+  catalog.yaml:
+    content: |
+      registry:
+        mcp-scripts:
+          remote:
+            url: "http://mcp-scripts:8080/mcp"
+            transport_type: http
+
+  # mcp-inspector pre-configuration: points the inspector at the gateway.
+  # The browser (on the host) reaches services via published ports on localhost,
+  # not by Docker service names (which are internal to the Docker network).
+  inspector.json:
+    content: |
+      {
+        "mcpServers": {
+          "mcp-scripts (via gateway)": {
+            "type": "streamableHttp",
+            "url": "http://localhost:9011/mcp"
+          },
+          "mcp-scripts (direct)": {
+            "type": "streamableHttp",
+            "url": "http://localhost:8080/mcp"
+          }
+        }
+      }

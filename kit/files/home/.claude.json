@@ -1,0 +1,10 @@
+{
+    "bypassPermissionsModeAccepted": true,
+    "hasCompletedOnboarding": true,
+    "mcpServers": {
+        "mcp-scripts": {
+            "type": "http",
+            "url": "http://host.docker.internal:9011/mcp"
+        }
+    }
+}
