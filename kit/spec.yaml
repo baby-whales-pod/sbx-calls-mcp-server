@@ -9,8 +9,3 @@ network:
     - "host.docker.internal:9011"
     - "host.docker.internal:8080"
 
-# commands:
-#   startup:
-#     - command: ["sh", "-c", "claude mcp add --transport http --scope user mcp-scripts http://host.docker.internal:9011/mcp 2>/dev/null || true"]
-#       user: "1000"
-#       description: Register MCP gateway in Claude Code user config
